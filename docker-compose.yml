@@ -1,0 +1,18 @@
+---
+version: '3'
+### Source: https://github.com/Archef2000/pivpn-docker/
+services:
+  plebvpn-client:
+    # original image: archef2000/pivpn:latest
+    image: plebvpn-client
+    container_name: plebvpn-client
+    # host networking doesn't quite work correctly, but is convenient for development
+    network_mode: host
+#    ports:
+#      - 42000:42099/udp
+    volumes:
+      - ./src/:/plebvpn-client/src
+    privileged: true # Is needed to run Openvpn
+
+volumes:
+  plebvpn_data:
