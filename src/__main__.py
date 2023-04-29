@@ -2,6 +2,7 @@ import requests
 import base64
 import subprocess
 import logging
+from src.plebvpn_common.types import *
 
 #url = "http://172.18.0.2:8000"
 url = "https://0.0.0.0:8000"
@@ -10,7 +11,7 @@ FORCE_SSL_VERIFICATION=False  # Change to True in production to avoid self-signe
 payload = {
     "port": 6969,
     "pubkey": "abcdef",
-    "name": "dickbutt7"
+    "name": "dickbutt11"
 }
 
 
@@ -45,20 +46,37 @@ def request_ovpn_config():
 def get_public_ip():
     proc = subprocess.Popen("curl https://api.ipify.org".split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = proc.communicate()
-    if proc.returncode is not 0:
+    if proc.returncode != 0:
         logging.error(f"Could not get IP address. curl output: {stderr}")
-        return Pleb
+        return PlebError.NO_CONNECTION
+
+    return stdout.decode()
 
 
 def test_vpn():
 
+    # Determine our real public IP
+    real_ip_addr = get_public_ip()
+    if real_ip_addr is PlebError.NO_CONNECTION:
+        logging.error("No internet connection. Bailing.")
+        return
 
-    real_ip_addr = stdout.decode()  # Our public IP address, sans VPN
+    logging.info(f"IP: {real_ip_addr}")
 
-    # Enable vpn
+    # Enable VPN
+
+    # Attempt to get VPN ip address
+    vpn_ip_addr = get_public_ip()
+
+    # compare IPs
+    if vpn_ip_addr == real_ip_addr:
+        logging.error("IP Leak! OpenVPN connection failed!!")
+
+
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     request_new_account()
     request_ovpn_config()
+    test_vpn()
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
