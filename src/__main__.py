@@ -2,17 +2,29 @@ import requests
 import base64
 import subprocess
 import logging
+import json
 from src.plebvpn_common.types import *
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(level=logging.DEBUG)
 
 #url = "http://172.18.0.2:8000"
 url = "https://0.0.0.0:8000"
 FORCE_SSL_VERIFICATION=False  # Change to True in production to avoid self-signed certs
 
 payload = {
-    "port": 6969,
+    "port": 6961,
     "pubkey": "abcdef",
-    "name": "dickbutt11"
+    "name": "dickbutt14"
 }
+
+
+def __sanitize_pleberror_response(resp_text):
+    try:
+        err = json.loads(resp_text)['detail']
+    except json.decoder.JSONDecodeError:
+        err = PlebError.UNKNOWN
+    return err
 
 
 def request_new_account():
@@ -20,10 +32,20 @@ def request_new_account():
     response = requests.post(url+endpoint, json=payload, verify=FORCE_SSL_VERIFICATION)
 
     if response.status_code == 200:
-        print("Account requested successfully!")
-        print(response.json())
+        logging.info("Account requested successfully!")
+        logging.debug(response.json())
     else:
-        print("Error requesting account. Status code:", response.status_code)
+        logging.debug(f"Error requesting account. Status code: {response.status_code}")
+        logging.debug(f"Error requesting account. Content: {response.text}")
+
+        err = __sanitize_pleberror_response(response.text)
+
+        if err == PlebError.BAD_PORT:
+            logging.error(f"Port {payload['port']} already in use")
+        elif err == PlebError.ACCOUNT_ALREADY_EXISTS:
+            logging.error(f"User {payload['name']} already in use")
+        elif err == PlebError.UNKNOWN:
+            logging.error("Unknown error")
 
 
 def request_ovpn_config():
@@ -32,15 +54,18 @@ def request_ovpn_config():
     response = requests.post(url+endpoint, json=payload, verify=FORCE_SSL_VERIFICATION)
 
     if response.status_code == 200:
-        print("Account requested successfully!")
-        print(response.json()[1])
+        logging.info("Ovpn file requested successfully!")
+        logging.debug(response.json()[0])
+        logging.debug(response.json()[1])
         config_bytes = base64.b64decode(response.json()[1])
-        print(config_bytes)
+        logging.debug(config_bytes)
 
         with open("/etc/openvpn/plebvpn.conf", 'wb') as ovpn_file:
             ovpn_file.write(config_bytes)
     else:
-        print("Error requesting account. Status code:", response.status_code)
+        logging.debug(f"Error requesting ovpn config. Status code: {response.status_code}")
+        logging.debug(f"Error requesting ovpn config. Content: {response.text}")
+        err = __sanitize_pleberror_response(response.text)
 
 
 def get_public_ip():
@@ -76,7 +101,7 @@ def test_vpn():
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     request_new_account()
-    request_ovpn_config()
-    test_vpn()
+    # request_ovpn_config()
+    # test_vpn()
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/
