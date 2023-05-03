@@ -7,6 +7,8 @@ import socket
 import json
 from urllib import parse
 
+from urllib3.exceptions import NewConnectionError
+
 from src.plebvpn_common.types import *
 
 logging.basicConfig(level=logging.DEBUG)
@@ -16,7 +18,10 @@ logging.getLogger().setLevel(level=logging.DEBUG)
 # url = "https://0.0.0.0:8000"
 FORCE_SSL_VERIFICATION = False  # Change to True in production to avoid self-signed certs
 
-payload = NewAccountReq(port=0, pubkey="abcdef", name="dickbutt26")
+payload = NewAccountReq(port=0, pubkey="abcdef", name="dickbutt29")
+
+# Gotta catch 'em all!
+CONNECTION_ERRORS = (NewConnectionError, ConnectionRefusedError, OSError, ConnectionError)
 
 
 def __sanitize_pleberror_response(resp_text):
@@ -29,32 +34,43 @@ def __sanitize_pleberror_response(resp_text):
 
 def request_new_account(url):
     endpoint = "/request_account"
-    response = requests.post(parse.urljoin(url, endpoint), json=payload.dict(), verify=FORCE_SSL_VERIFICATION)
+
+    try:
+        response = requests.post(parse.urljoin(url, endpoint), json=payload.dict(), verify=FORCE_SSL_VERIFICATION)
+    except CONNECTION_ERRORS:
+        return PlebError.NO_CONNECTION
 
     logging.info("Requesting a new account..")
 
     if response.status_code == 201:
         logging.info("Account requested successfully!")
         logging.debug(response.json())
+        _err = PlebError.SUCCESS
     else:
         logging.debug(f"Error requesting account. Status code: {response.status_code}")
         logging.debug(f"Error requesting account. Content: {response.text}")
 
-        err = __sanitize_pleberror_response(response.text)
+        _err = __sanitize_pleberror_response(response.text)
 
         # We've already negotiated ports, so this shouldn't happen, but it's worth checking anyway.
-        if err == PlebError.BAD_PORT:
+        if _err == PlebError.BAD_PORT:
             logging.error(f"Port {payload.port} already in use")
-        elif err == PlebError.ACCOUNT_ALREADY_EXISTS:
+        elif _err == PlebError.ACCOUNT_ALREADY_EXISTS:
             logging.error(f"User {payload.name} already in use")
-        elif err == PlebError.UNKNOWN:
+        elif _err == PlebError.UNKNOWN:
             logging.error("Unknown error")
+
+    return _err
 
 
 def request_ovpn_config(url):
     # TODO: Remove need for sending name a second time. Server should be able to return the config based on LN login
     endpoint = "/request_ovpn_config"
-    response = requests.post(parse.urljoin(url, endpoint), json=payload.dict(), verify=FORCE_SSL_VERIFICATION)
+
+    try:
+        response = requests.post(parse.urljoin(url, endpoint), json=payload.dict(), verify=FORCE_SSL_VERIFICATION)
+    except CONNECTION_ERRORS:
+        return PlebError.NO_CONNECTION
 
     if response.status_code == 200:
         logging.info("Ovpn file requested successfully!")
@@ -69,6 +85,7 @@ def request_ovpn_config(url):
         logging.debug(f"Error requesting ovpn config. Status code: {response.status_code}")
         logging.debug(f"Error requesting ovpn config. Content: {response.text}")
         err = __sanitize_pleberror_response(response.text)
+        return err
 
 
 def negotiate_ports(url):
@@ -88,15 +105,18 @@ def negotiate_ports(url):
 
             logging.debug(f"Requesting port {_port}")
 
-            response = requests.post(parse.urljoin(url, endpoint), json=PortReq(port=_port).dict(),
-                                     verify=FORCE_SSL_VERIFICATION)
+            try:
+                response = requests.post(parse.urljoin(url, endpoint), json=PortReq(port=_port).dict(),
+                                         verify=FORCE_SSL_VERIFICATION)
+            except CONNECTION_ERRORS:
+                return PlebError.NO_CONNECTION
 
         if response.status_code == 200:
             logging.info(f"Successfully negotiated port {_port}")
             return _port
 
-        err = __sanitize_pleberror_response(response.text)
-        if err == PlebError.BAD_PORT:
+        _err = __sanitize_pleberror_response(response.text)
+        if _err == PlebError.BAD_PORT:
             sleep(0.1)  # In case something goes very wrong, don't DDoS the server.
             continue
 
@@ -153,11 +173,16 @@ if __name__ == '__main__':
         port = negotiate_ports(args.server)
         if port == PlebError.BAD_PORT:
             logging.error("Could not negotiate a good LND port with the server. Bailing.")
-            exit(1)
+            exit(PlebError.BAD_PORT)
 
         payload.port = port
-        request_new_account(args.server)
-        # request_ovpn_config(args.server)
+        err = request_new_account(args.server)
+        if err is not None:
+            exit(err)
+
+        err = request_ovpn_config(args.server)
+        if err is not None:
+            exit(err)
 
     elif args.action == Actions.DOWNLOAD_VPN_CONF.value:
         print("Downloading VPN configuration")
