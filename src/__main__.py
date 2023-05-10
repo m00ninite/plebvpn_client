@@ -6,6 +6,7 @@ import logging
 import socket
 import json
 from urllib import parse
+import os
 
 from urllib3.exceptions import NewConnectionError
 
@@ -17,8 +18,14 @@ logging.getLogger().setLevel(level=logging.DEBUG)
 # url = "https://192.168.1.212:8000"
 # url = "https://0.0.0.0:8000"
 FORCE_SSL_VERIFICATION = False  # Change to True in production to avoid self-signed certs
+PLEB_SECRET_FILE = "/home/admin/pleb-vpn/pleb-vpn.secret"
 
-payload = NewAccountReq(port=0, pubkey="abcdef", name="dickbutt29")
+import random
+
+# random_name will be changed to node's pubkey when testing is done
+#random_name = f"dickbutt{random.randrange(1000000,90000000)}"
+random_name = "dickbutt42548"
+payload = NewAccountReq(port=0, pubkey="abcdef", name=random_name)
 
 # Gotta catch 'em all!
 CONNECTION_ERRORS = (NewConnectionError, ConnectionRefusedError, OSError, ConnectionError)
@@ -26,10 +33,37 @@ CONNECTION_ERRORS = (NewConnectionError, ConnectionRefusedError, OSError, Connec
 
 def __sanitize_pleberror_response(resp_text):
     try:
-        err = json.loads(resp_text)['detail']
+        _err = json.loads(resp_text)['detail']
     except json.decoder.JSONDecodeError:
-        err = PlebError.UNKNOWN
-    return err
+        _err = PlebError.UNKNOWN
+    return _err
+
+
+def _get_plebvpn_secret():
+    with open(PLEB_SECRET_FILE, 'r') as secret:
+        return secret.read()
+
+
+def _save_plebvpn_secret(_bytes):
+    with open(PLEB_SECRET_FILE, 'w') as secret:
+        secret.write(_bytes)
+    os.chmod(PLEB_SECRET_FILE, 0o600)
+
+
+def check_account_availability(url: str, name: str):
+    req = CheckAccountReq(name=name)
+    endpoint = "/check_account_availability"
+    try:
+        response = requests.post(parse.urljoin(url, endpoint), json=req.dict(), verify=FORCE_SSL_VERIFICATION)
+    except CONNECTION_ERRORS:
+        return PlebError.NO_CONNECTION
+
+    if response.status_code == 200:
+        return PlebError.SUCCESS
+    else:
+        logging.debug(f"Could not request account {name}. Account already exists?")
+        _err = __sanitize_pleberror_response(response.text)
+        return _err
 
 
 def request_new_account(url):
@@ -45,6 +79,7 @@ def request_new_account(url):
     if response.status_code == 201:
         logging.info("Account requested successfully!")
         logging.debug(response.json())
+        _save_plebvpn_secret(response.json()['secret'])
         _err = PlebError.SUCCESS
     else:
         logging.debug(f"Error requesting account. Status code: {response.status_code}")
@@ -63,29 +98,31 @@ def request_new_account(url):
     return _err
 
 
-def request_ovpn_config(url):
-    # TODO: Remove need for sending name a second time. Server should be able to return the config based on LN login
+def request_ovpn_config(_url: str, _name: str):
+    """Used for downloading an openvpn profile for an account that already exists."""
     endpoint = "/request_ovpn_config"
-
     try:
-        response = requests.post(parse.urljoin(url, endpoint), json=payload.dict(), verify=FORCE_SSL_VERIFICATION)
+        req = OpenVPNReq(url=_url, name=_name, secret=_get_plebvpn_secret())
+    except Exception as e:
+        logging.exception(e)
+        return PlebError.INVALID_CREDENTIALS
+    try:
+        response = requests.post(parse.urljoin(_url, endpoint), json=req.dict(), verify=FORCE_SSL_VERIFICATION)
     except CONNECTION_ERRORS:
         return PlebError.NO_CONNECTION
 
     if response.status_code == 200:
         logging.info("Ovpn file requested successfully!")
-        logging.debug(response.json()[0])
-        logging.debug(response.json()[1])
-        config_bytes = base64.b64decode(response.json()[1])
-        logging.debug(config_bytes)
+        logging.debug(response.json())
+        ovpn_config_bytes = response.json()['ovpn_bytes']
 
-        with open("/home/admin/plebvpn.conf", 'wb') as ovpn_file:
-            ovpn_file.write(config_bytes)
+        with open("/home/admin/plebvpn.conf", 'w') as ovpn_file:
+            ovpn_file.write(ovpn_config_bytes)
     else:
         logging.debug(f"Error requesting ovpn config. Status code: {response.status_code}")
         logging.debug(f"Error requesting ovpn config. Content: {response.text}")
-        err = __sanitize_pleberror_response(response.text)
-        return err
+        _err = __sanitize_pleberror_response(response.text)
+        return _err
 
 
 def negotiate_ports(url):
@@ -161,6 +198,7 @@ if __name__ == '__main__':
     class Actions(Enum):
         CREATE_ACCOUNT = "create_account"
         DOWNLOAD_VPN_CONF = "download_vpn_config"
+        CHECK_ACCOUNT_EXISTS = "check_account_exists"
 
     parser = argparse.ArgumentParser(prog="PlebVPN", description="A VPN for your Lightning Node!")
 
@@ -170,6 +208,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.action == Actions.CREATE_ACCOUNT.value:
+        if check_account_availability(args.server, random_name) == PlebError.ACCOUNT_ALREADY_EXISTS:
+            logging.error("Account name already exists.")
+            exit(PlebError.ACCOUNT_ALREADY_EXISTS)
         port = negotiate_ports(args.server)
         if port == PlebError.BAD_PORT:
             logging.error("Could not negotiate a good LND port with the server. Bailing.")
@@ -177,15 +218,20 @@ if __name__ == '__main__':
 
         payload.port = port
         err = request_new_account(args.server)
-        if err is not None:
-            exit(err)
-
-        err = request_ovpn_config(args.server)
-        if err is not None:
+        if err is not PlebError.SUCCESS:
             exit(err)
 
     elif args.action == Actions.DOWNLOAD_VPN_CONF.value:
-        print("Downloading VPN configuration")
+        logging.info("Downloading VPN configuration..")
+        err = request_ovpn_config(args.server, random_name)
+        if err is not PlebError.SUCCESS:
+            exit(err)
+
+    elif args.action == Actions.CHECK_ACCOUNT_EXISTS.value:
+        err = check_account_availability(args.server, random_name)
+        if err is not PlebError.SUCCESS:
+            logging.info("Account already exists")
+            exit(err)
 
     # request_new_account()
     # request_ovpn_config()
