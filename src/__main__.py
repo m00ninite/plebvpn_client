@@ -177,7 +177,7 @@ def get_public_ip():
 
 
 def test_vpn():
-
+    """Unused and untested. For now, the bulk of the work is done in vpn-install.sh in plebvpn repo"""
     # Determine our real public IP
     real_ip_addr = get_public_ip()
     if real_ip_addr is PlebError.NO_CONNECTION:
@@ -186,7 +186,7 @@ def test_vpn():
 
     logging.info(f"IP: {real_ip_addr}")
 
-    # Enable VPN
+    # Enable VPN (TODO)
 
     # Attempt to get VPN ip address
     vpn_ip_addr = get_public_ip()
