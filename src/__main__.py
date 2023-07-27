@@ -19,13 +19,12 @@ logging.getLogger().setLevel(level=logging.DEBUG)
 # url = "https://0.0.0.0:8000"
 FORCE_SSL_VERIFICATION = False  # Change to True in production to avoid self-signed certs
 PLEB_SECRET_FILE = "/home/admin/pleb-vpn/pleb-vpn.secret"
+OVPN_CONFIG_FILE = "/home/admin/plebvpn.conf"
 
+# TODO: change username to node's pubkey when testing is done
 import random
-
-# random_name will be changed to node's pubkey when testing is done
-#random_name = f"dickbutt{random.randrange(1000000,90000000)}"
-random_name = "dickbutt42548"
-payload = NewAccountReq(port=0, pubkey="abcdef", name=random_name)
+username = f"satoshi{random.randrange(1000000, 90000000)}"
+payload = NewAccountReq(port=0, pubkey="abcdef", name=username)
 
 # Gotta catch 'em all!
 CONNECTION_ERRORS = (NewConnectionError, ConnectionRefusedError, OSError, ConnectionError)
@@ -48,6 +47,12 @@ def _save_plebvpn_secret(_bytes):
     with open(PLEB_SECRET_FILE, 'w') as secret:
         secret.write(_bytes)
     os.chmod(PLEB_SECRET_FILE, 0o600)
+
+
+def _save_ovpn_file(ovpn_config_bytes):
+    with open(OVPN_CONFIG_FILE, 'wb') as ovpn_file:
+        text = base64.b64decode(ovpn_config_bytes)
+        ovpn_file.write(text)
 
 
 def check_account_availability(url: str, name: str):
@@ -80,6 +85,8 @@ def request_new_account(url):
         logging.info("Account requested successfully!")
         logging.debug(response.json())
         _save_plebvpn_secret(response.json()['secret'])
+        _save_ovpn_file(response.json()['ovpn_bytes'])
+
         _err = PlebError.SUCCESS
     else:
         logging.debug(f"Error requesting account. Status code: {response.status_code}")
@@ -115,9 +122,8 @@ def request_ovpn_config(_url: str, _name: str):
         logging.info("Ovpn file requested successfully!")
         logging.debug(response.json())
         ovpn_config_bytes = response.json()['ovpn_bytes']
+        _save_ovpn_file(ovpn_config_bytes)
 
-        with open("/home/admin/plebvpn.conf", 'w') as ovpn_file:
-            ovpn_file.write(ovpn_config_bytes)
     else:
         logging.debug(f"Error requesting ovpn config. Status code: {response.status_code}")
         logging.debug(f"Error requesting ovpn config. Content: {response.text}")
@@ -208,7 +214,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.action == Actions.CREATE_ACCOUNT.value:
-        if check_account_availability(args.server, random_name) == PlebError.ACCOUNT_ALREADY_EXISTS:
+        if check_account_availability(args.server, username) == PlebError.ACCOUNT_ALREADY_EXISTS:
             logging.error("Account name already exists.")
             exit(PlebError.ACCOUNT_ALREADY_EXISTS)
         port = negotiate_ports(args.server)
@@ -223,18 +229,12 @@ if __name__ == '__main__':
 
     elif args.action == Actions.DOWNLOAD_VPN_CONF.value:
         logging.info("Downloading VPN configuration..")
-        err = request_ovpn_config(args.server, random_name)
+        err = request_ovpn_config(args.server, username)
         if err is not PlebError.SUCCESS:
             exit(err)
 
     elif args.action == Actions.CHECK_ACCOUNT_EXISTS.value:
-        err = check_account_availability(args.server, random_name)
+        err = check_account_availability(args.server, username)
         if err is not PlebError.SUCCESS:
             logging.info("Account already exists")
             exit(err)
-
-    # request_new_account()
-    # request_ovpn_config()
-    # test_vpn()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
