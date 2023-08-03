@@ -17,7 +17,7 @@ logging.getLogger().setLevel(level=logging.DEBUG)
 
 # url = "https://192.168.1.212:8000"
 # url = "https://0.0.0.0:8000"
-FORCE_SSL_VERIFICATION = False  # Change to True in production to avoid self-signed certs
+FORCE_SSL_VERIFICATION = True  # Change to True in production to avoid self-signed certs
 PLEB_SECRET_FILE = "/home/admin/pleb-vpn/pleb-vpn.secret"
 OVPN_CONFIG_FILE = "/home/admin/plebvpn.conf"
 
